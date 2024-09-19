@@ -1,0 +1,12 @@
+.DS_Store
+venv/
+*__pycache__*
+
+# Distro Packaging
+lp02/package/
+lp02/lp02/
+*.zip
+
+# Terraform stuff
+*.tfstate*
+*.terraform*
