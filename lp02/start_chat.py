@@ -46,9 +46,6 @@ with left_col:
 
 # When the user submits a message
 if submit_button and user_input:
-    # Append the user input to the chat history
-    st.session_state.conversation.append(f"**You:** {user_input}")
-
     # Add the user input to the LLM context
     st.session_state.llm_messages.append(HumanMessage(content=user_input))
 
@@ -58,8 +55,12 @@ if submit_button and user_input:
     # Add the LLM response to the LLM context
     st.session_state.llm_messages.append(AIMessage(content=ai_response.content))
 
-    # Append the LLM response to the chat history
-    st.session_state.conversation.append(f"**AI:** {ai_response.content}")
+    # Add the User Input and LLM response to the chat history, but ensure they are at the top for easy reading
+    st.session_state.conversation.insert(0, "---")
+    st.session_state.conversation.insert(0, ai_response.content)
+    st.session_state.conversation.insert(0, "**-- AI --**")
+    st.session_state.conversation.insert(0, user_input)
+    st.session_state.conversation.insert(0, "**-- You --**")
 
 # Conversation log on the right side
 with right_col:
