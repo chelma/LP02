@@ -5,7 +5,7 @@ A project to learn more about generative AI
 ### Running the code
 
 #### Locally
-To run the code locally, use a Python virtual environment:
+To run the code locally, use a Python virtual environment.  You'll need AWS Credentials in your AWS Keyring, permissions to invoke Bedrock, and to have onboarded your account to use Claude 3.5 Sonnet.
 
 ```
 # Start in the repo root
@@ -15,7 +15,7 @@ source venv/bin/activate
 
 cd lp02
 pipenv sync --dev
-pipenv run streamlit run launch_web_console.py
+pipenv run streamlit run start_chat.py
 ```
 
 #### In AWS
