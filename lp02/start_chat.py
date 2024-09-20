@@ -1,5 +1,6 @@
 from langchain_aws import ChatBedrock
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 import streamlit as st
 
 # Set page configuration to 'wide' to use the full width of the screen
@@ -12,11 +13,16 @@ llm = ChatBedrock(
     region_name="us-west-2"
 )
 
+# Create our prompt template
+prompt_template = ChatPromptTemplate([
+    ("human", "{human_request}"),
+])
+
 # Initialize session state to keep track of conversation history and LLM messages
 if 'conversation' not in st.session_state:
     st.session_state.conversation = []
 if 'llm_messages' not in st.session_state:
-    st.session_state.llm_messages = [SystemMessage(content="You are a helpful chatbot.")]
+    st.session_state.llm_messages = []
 
 st.title("GenAI Chatbot")
 
@@ -46,11 +52,16 @@ with left_col:
 
 # When the user submits a message
 if submit_button and user_input:
+    # Generate the next LLM prompt using the user input
+    next_prompt = prompt_template.invoke({"human_request": user_input})
+
     # Add the user input to the LLM context
-    st.session_state.llm_messages.append(HumanMessage(content=user_input))
+    st.session_state.llm_messages.extend(next_prompt.messages)
 
     # Invoke the LLM with the user input
-    ai_response = llm.invoke(st.session_state.llm_messages)
+    next_context = [SystemMessage(content="You are a helpful chatbot who assists the human with their request.")]
+    next_context.extend(st.session_state.llm_messages)
+    ai_response = llm.invoke(next_context)
 
     # Add the LLM response to the LLM context
     st.session_state.llm_messages.append(AIMessage(content=ai_response.content))
