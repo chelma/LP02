@@ -1,22 +1,11 @@
-from langchain_aws import ChatBedrock
+
+from cw_expert.agent import EXPERT
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
+
 import streamlit as st
 
 # Set page configuration to 'wide' to use the full width of the screen
 st.set_page_config(layout="wide")
-
-# Initialize the LLM
-llm = ChatBedrock(
-    model_id="anthropic.claude-3-5-sonnet-20240620-v1:0",
-    model_kwargs={"max_tokens": 20000, "temperature": 0.3},
-    region_name="us-west-2"
-)
-
-# Create our prompt template
-prompt_template = ChatPromptTemplate([
-    ("human", "{human_request}"),
-])
 
 # Initialize session state to keep track of conversation history and LLM messages
 if 'conversation' not in st.session_state:
@@ -52,19 +41,17 @@ with left_col:
 
 # When the user submits a message
 if submit_button and user_input:
-    # Generate the next LLM prompt using the user input
-    next_prompt = prompt_template.invoke({"human_request": user_input})
-
-    # Add the user input to the LLM context
-    st.session_state.llm_messages.extend(next_prompt.messages)
-
     # Invoke the LLM with the user input
-    next_context = [SystemMessage(content="You are a helpful chatbot who assists the human with their request.")]
-    next_context.extend(st.session_state.llm_messages)
-    ai_response = llm.invoke(next_context)
+    # Use the Runnable
+    st.session_state.llm_messages.append(HumanMessage(content=user_input))
+    final_state = EXPERT.invoke(
+        {"messages": st.session_state.llm_messages},
+        config={"configurable": {"thread_id": 42}}
+    )
+    ai_response = final_state["messages"][-1]
 
-    # Add the LLM response to the LLM context
-    st.session_state.llm_messages.append(AIMessage(content=ai_response.content))
+    # Update the message history
+    st.session_state.llm_messages = final_state["messages"]
 
     # Add the User Input and LLM response to the chat history, but ensure they are at the top for easy reading
     st.session_state.conversation.insert(0, "---")
