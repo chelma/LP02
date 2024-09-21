@@ -27,7 +27,6 @@ def should_continue(state: MessagesState) -> Literal["tool_direct", "tool", END]
     messages = state['messages']
     last_message = messages[-1]
     # If the LLM makes a tool call, then we route to the "tools" node unless we need a direct response
-    print(last_message.tool_calls)
     if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tool_names_direct:
         return "tool_direct"
     elif last_message.tool_calls:

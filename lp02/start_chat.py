@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 import streamlit as st
 
 from cw_expert import CW_AGENT, CW_SYSTEM_MESSAGE
+from utilities.ux import stringify_simplified_history
 
 
 # Set page configuration to 'wide' to use the full width of the screen
@@ -50,7 +51,8 @@ if submit_button and user_input:
     )
     ai_response = final_state["messages"][-1]
 
-    print(final_state)
+    print("=======================================================================================================")
+    print(stringify_simplified_history(final_state["messages"]))
 
     # Update the message history
     st.session_state.llm_messages = final_state["messages"]
