@@ -10,7 +10,7 @@ from aws_interactions.aws_client_provider import AwsClientProvider
 logger = logging.getLogger(__name__)
 
 #
-# Define a tool to list the metrics for an Amazon OpenSearch Service domain
+# Define tools to list the metrics for an Amazon OpenSearch Service domain
 #
 
 class InvalidDomainArnError(Exception):
@@ -39,7 +39,7 @@ def parse_domain_arn(domain_arn: str) -> DomainDetails:
     return DomainDetails(domain_name=domain_name, domain_arn=domain_arn, region=region, account_id=account_id)
 
 
-def list_metrics_for_opensearch_domain(domain_arn: str) -> str:
+def list_raw_metrics_for_opensearch_domain(domain_arn: str) -> str:
     try:
         domain_details = parse_domain_arn(domain_arn)
     except InvalidDomainArnError as e:
@@ -77,16 +77,32 @@ def list_metrics_for_opensearch_domain(domain_arn: str) -> str:
         return f"Error: {str(e)}"
     
     metric_names.sort()
-    return ", ".join(metric_names)
+    final_response = (
+        f"Metrics for OpenSearch domain '{domain_details.domain_arn}':\n"
+        + ", ".join(metric_names)
+    )
+    return final_response
 
-class ListMetricsForOpenSearchDomainArgs(BaseModel):
-    """Lists the metric names for an Amazon OpenSearch Service domain as a comma-separated string."""
+class ListRawMetricsForOpenSearchDomainArgs(BaseModel):
+    """Returns a listing of the raw metric names for an Amazon OpenSearch Service domain directly to the User.  May contain MANY results, and output is ugly.  Only use when your REALLY need to know all of the metrics by name."""
     domain_arn: str = Field(description="The full Amazon ARN of the domain.")
 
-list_metrics_for_opensearch_domain_tool = StructuredTool.from_function(
-    func=list_metrics_for_opensearch_domain,
-    name="ListMetricsForOpenSearchDomain",
-    args_schema=ListMetricsForOpenSearchDomainArgs
+list_raw_metrics_for_opensearch_domain_tool = StructuredTool.from_function(
+    func=list_raw_metrics_for_opensearch_domain,
+    name="ListRawMetricsForOpenSearchDomainArgs",
+    args_schema=ListRawMetricsForOpenSearchDomainArgs
 )
 
-TOOLS = [list_metrics_for_opensearch_domain_tool]
+class ExplainMetricsForOpenSearchDomainArgs(BaseModel):
+    """Preferred way to List, Explain, or Explore the metric available for an Amazon OpenSearch Service domain.  Returns a list of metric names and allows the LLM to consider them."""
+    domain_arn: str = Field(description="The full Amazon ARN of the domain.")
+
+explain_metrics_for_opensearch_domain_tool = StructuredTool.from_function(
+    func=list_raw_metrics_for_opensearch_domain,
+    name="ExplainMetricsForOpenSearchDomain",
+    args_schema=ExplainMetricsForOpenSearchDomainArgs
+)
+
+TOOLS_NORMAL = [explain_metrics_for_opensearch_domain_tool]
+TOOLS_DIRECT_RESPONSE = [list_raw_metrics_for_opensearch_domain_tool]
+TOOLS_ALL = TOOLS_NORMAL + TOOLS_DIRECT_RESPONSE

@@ -1,11 +1,12 @@
 from typing import Literal
 
 from langchain_aws import ChatBedrockConverse
+from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
 
-from cw_expert.tools import TOOLS
+from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL
 
 
 # Define our LLM
@@ -16,16 +17,21 @@ llm = ChatBedrockConverse(
     region_name="us-west-2"
 )
 
-llm_with_tools = llm.bind_tools(TOOLS)
-tool_node = ToolNode(TOOLS)
+# Set up our tools
+llm_with_tools = llm.bind_tools(TOOLS_ALL)
+tool_node = ToolNode(TOOLS_ALL)
+tool_names_direct = [tool.name for tool in TOOLS_DIRECT_RESPONSE]
 
 # Define the function that determines whether to continue or not
-def should_continue(state: MessagesState) -> Literal["tools", END]:
+def should_continue(state: MessagesState) -> Literal["tool_direct", "tool", END]:
     messages = state['messages']
     last_message = messages[-1]
-    # If the LLM makes a tool call, then we route to the "tools" node
-    if last_message.tool_calls:
-        return "tools"
+    # If the LLM makes a tool call, then we route to the "tools" node unless we need a direct response
+    print(last_message.tool_calls)
+    if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tool_names_direct:
+        return "tool_direct"
+    elif last_message.tool_calls:
+        return "tool"
     # Otherwise, we stop (reply to the user)
     return END
 
@@ -39,9 +45,10 @@ def call_model(state: MessagesState):
 # Define a new graph
 workflow = StateGraph(MessagesState)
 
-# Define the two nodes we will cycle between
+# Define the nodes; we cycle between the agent and the tool nodes unless we need a direct response from a tool
 workflow.add_node("agent", call_model)
-workflow.add_node("tools", tool_node)
+workflow.add_node("tool", tool_node)
+workflow.add_node("tool_direct", tool_node)
 
 # Set the entrypoint as `agent`
 # This means that this node is the first one called
@@ -58,7 +65,10 @@ workflow.add_conditional_edges(
 
 # We now add a normal edge from `tools` to `agent`.
 # This means that after `tools` is called, `agent` node is called next.
-workflow.add_edge("tools", 'agent')
+workflow.add_edge("tool", 'agent')
+
+# We now add a normal edge to ensure that the direct response is sent to the user
+workflow.add_edge("tool_direct", END)
 
 # Initialize memory to persist state between graph runs
 checkpointer = MemorySaver()
