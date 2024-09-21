@@ -18,6 +18,8 @@ pipenv sync --dev
 pipenv run streamlit run start_chat.py
 ```
 
+This will launch a Streamlit app, which should redirect you to your default browser and allow you to chat w/ an AI Agent.
+
 #### In AWS
 The package uses Terraform to manage its cloud deployments.  You'll need valid AWS Credentials in your keyring (check using `aws sts get-caller-identity`).
 
