@@ -1,8 +1,9 @@
 
-from cw_expert.agent import EXPERT
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
+from langchain_core.messages import HumanMessage
 import streamlit as st
+
+from cw_expert import CW_AGENT, CW_SYSTEM_MESSAGE
+
 
 # Set page configuration to 'wide' to use the full width of the screen
 st.set_page_config(layout="wide")
@@ -11,7 +12,7 @@ st.set_page_config(layout="wide")
 if 'conversation' not in st.session_state:
     st.session_state.conversation = []
 if 'llm_messages' not in st.session_state:
-    st.session_state.llm_messages = []
+    st.session_state.llm_messages = [CW_SYSTEM_MESSAGE]
 
 st.title("GenAI Chatbot")
 
@@ -42,13 +43,14 @@ with left_col:
 # When the user submits a message
 if submit_button and user_input:
     # Invoke the LLM with the user input
-    # Use the Runnable
     st.session_state.llm_messages.append(HumanMessage(content=user_input))
-    final_state = EXPERT.invoke(
+    final_state = CW_AGENT.invoke(
         {"messages": st.session_state.llm_messages},
         config={"configurable": {"thread_id": 42}}
     )
     ai_response = final_state["messages"][-1]
+
+    print(final_state)
 
     # Update the message history
     st.session_state.llm_messages = final_state["messages"]
@@ -66,4 +68,4 @@ with right_col:
     for entry in st.session_state.conversation:
         st.markdown(entry)
 
-print(st.session_state.llm_messages)
+# print(st.session_state.llm_messages)

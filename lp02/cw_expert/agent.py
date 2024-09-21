@@ -1,41 +1,23 @@
 from typing import Literal
 
 from langchain_aws import ChatBedrockConverse
-from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
-from pydantic import BaseModel, Field
+
+from cw_expert.tools import TOOLS
 
 
 # Define our LLM
 llm = ChatBedrockConverse(
     model="anthropic.claude-3-5-sonnet-20240620-v1:0",
     temperature=0,
-    max_tokens=None,
+    max_tokens=4096,
     region_name="us-west-2"
 )
 
-# Define Tools
-def get_current_time(city: str):
-    import datetime
-
-    now = datetime.datetime.now()
-    return now.strftime("%I:%M %p")
-
-class GetCurrentTimeArgs(BaseModel):
-    '''Gets the current time in a specific city, formatted as HH:MM AM/PM.'''
-    city: str = Field(description="The name of the city to get the current time for.")
-
-get_current_time_tool = StructuredTool.from_function(
-    func=get_current_time,
-    name="GetCurrentTime",
-    args_schema=GetCurrentTimeArgs
-)
-
-tools = [get_current_time_tool]
-llm_with_tools = llm.bind_tools(tools)
-tool_node = ToolNode(tools)
+llm_with_tools = llm.bind_tools(TOOLS)
+tool_node = ToolNode(TOOLS)
 
 # Define the function that determines whether to continue or not
 def should_continue(state: MessagesState) -> Literal["tools", END]:
@@ -85,4 +67,4 @@ checkpointer = MemorySaver()
 # This compiles it into a LangChain Runnable,
 # meaning you can use it as you would any other runnable.
 # Note that we're (optionally) passing the memory when compiling the graph
-EXPERT = workflow.compile(checkpointer=checkpointer)
+AGENT = workflow.compile(checkpointer=checkpointer)
