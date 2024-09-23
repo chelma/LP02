@@ -1,7 +1,7 @@
 from typing import Literal
 
 from langchain_aws import ChatBedrockConverse
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
 from langgraph.prebuilt import ToolNode
@@ -19,15 +19,28 @@ llm = ChatBedrockConverse(
 
 # Set up our tools
 llm_with_tools = llm.bind_tools(TOOLS_ALL)
-tool_node = ToolNode(TOOLS_ALL)
-tool_names_direct = [tool.name for tool in TOOLS_DIRECT_RESPONSE]
+tool_node = ToolNode(TOOLS_NORMAL)
+tools_direct_by_name = {tool.name: tool for tool in TOOLS_DIRECT_RESPONSE}
+
+# Handle tool calls which require a "direct" final response to the user a bit differently
+# We MUST have an AIMessage between each ToolMessage and any HumanMessage.  We spoof that
+# by adding an AIMessage at the end of our calls here.
+def tool_node_direct(state: dict):
+    result = []
+    tool_call = state["messages"][-1].tool_calls[-1]
+    tool = tools_direct_by_name[tool_call["name"]]
+    observation = tool.invoke(tool_call["args"])
+    result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+    result.append(AIMessage(content=observation))
+
+    return {"messages": result}
 
 # Define the function that determines whether to continue or not
 def should_continue(state: MessagesState) -> Literal["tool_direct", "tool", END]:
     messages = state['messages']
     last_message = messages[-1]
     # If the LLM makes a tool call, then we route to the "tools" node unless we need a direct response
-    if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tool_names_direct:
+    if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tools_direct_by_name.keys():
         return "tool_direct"
     elif last_message.tool_calls:
         return "tool"
@@ -47,7 +60,7 @@ workflow = StateGraph(MessagesState)
 # Define the nodes; we cycle between the agent and the tool nodes unless we need a direct response from a tool
 workflow.add_node("agent", call_model)
 workflow.add_node("tool", tool_node)
-workflow.add_node("tool_direct", tool_node)
+workflow.add_node("tool_direct", tool_node_direct)
 
 # Set the entrypoint as `agent`
 # This means that this node is the first one called

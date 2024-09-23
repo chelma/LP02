@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import logging
 import re
+import uuid
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -39,7 +40,7 @@ def parse_domain_arn(domain_arn: str) -> DomainDetails:
     return DomainDetails(domain_name=domain_name, domain_arn=domain_arn, region=region, account_id=account_id)
 
 
-def list_raw_metrics_for_opensearch_domain(domain_arn: str) -> str:
+def get_raw_metric_names_for_opensearch_domain(domain_arn: str) -> str:
     try:
         domain_details = parse_domain_arn(domain_arn)
     except InvalidDomainArnError as e:
@@ -77,32 +78,61 @@ def list_raw_metrics_for_opensearch_domain(domain_arn: str) -> str:
         return f"Error: {str(e)}"
     
     metric_names.sort()
-    final_response = (
-        f"Metrics for OpenSearch domain '{domain_details.domain_arn}':\n"
-        + ", ".join(metric_names)
-    )
+    final_response = f"""
+    Metrics for OpenSearch domain '{domain_details.domain_arn}':
+
+    {", ".join(metric_names)}
+    """
     return final_response
 
-class ListRawMetricsForOpenSearchDomainArgs(BaseModel):
-    """Returns a listing of the raw metric names for an Amazon OpenSearch Service domain directly to the User.  May contain MANY results, and output is ugly.  Only use when your REALLY need to know all of the metrics by name."""
+class PrintRawMetricNamesForOpenSearchDomainArgs(BaseModel):
+    """Returns a listing of the raw metric names for an Amazon OpenSearch Service domain directly to the User.  DO NOT USE UNLESS SPECIFICALLY REQUESTED."""
     domain_arn: str = Field(description="The full Amazon ARN of the domain.")
 
 list_raw_metrics_for_opensearch_domain_tool = StructuredTool.from_function(
-    func=list_raw_metrics_for_opensearch_domain,
-    name="ListRawMetricsForOpenSearchDomainArgs",
-    args_schema=ListRawMetricsForOpenSearchDomainArgs
+    func=get_raw_metric_names_for_opensearch_domain,
+    name="PrintRawMetricNamesForOpenSearchDomain",
+    args_schema=PrintRawMetricNamesForOpenSearchDomainArgs
 )
 
 class ExplainMetricsForOpenSearchDomainArgs(BaseModel):
-    """Preferred way to List, Explain, or Explore the metric available for an Amazon OpenSearch Service domain.  Returns a list of metric names and allows the LLM to consider them."""
+    """PREFERRED way to List, Explain, or Explore the metrics available for an Amazon OpenSearch Service domain.  Queries the CloudWatch API to get a list of metrics then passes it to the LLM to consider."""
     domain_arn: str = Field(description="The full Amazon ARN of the domain.")
 
 explain_metrics_for_opensearch_domain_tool = StructuredTool.from_function(
-    func=list_raw_metrics_for_opensearch_domain,
+    func=get_raw_metric_names_for_opensearch_domain,
     name="ExplainMetricsForOpenSearchDomain",
     args_schema=ExplainMetricsForOpenSearchDomainArgs
 )
 
-TOOLS_NORMAL = [explain_metrics_for_opensearch_domain_tool]
+def create_new_cloudwatch_dashboard_from_json(dashboard_json: str, aws_region_name: str) -> str:
+    """
+    Create a new CloudWatch dashboard from a JSON string.  Returns the ARN of the created dashboard.
+    """
+    aws_client_provider = AwsClientProvider(aws_region=aws_region_name)
+    cloudwatch_client = aws_client_provider.get_cloudwatch()
+
+    # Create the dashboard with a random name
+    random_name = f"dashboard-{uuid.uuid4().hex}"
+    response = cloudwatch_client.put_dashboard(DashboardName=random_name, DashboardBody=dashboard_json)
+    print(response)
+
+    # Return the ARN of the created dashboard
+    dashboard_arn = cloudwatch_client.get_dashboard(DashboardName=random_name)["DashboardArn"]
+    
+    return dashboard_arn
+
+class CreateNewCloudwatchDashboardFromJsonArgs(BaseModel):
+    """Creates a completely new CloudWatch dashboard from a JSON string, assigning it a random UUID for a name. Returns the ARN of the created dashboard."""
+    dashboard_json: str = Field(description="The JSON string representing the new dashboard's full body definition.")
+    aws_region_name: str = Field(description="The AWS Region to create the dashboard in (example: us-east-1, us-west-2, etc...).")
+
+create_new_cloudwatch_dashboard_from_json_tool = StructuredTool.from_function(
+    func=create_new_cloudwatch_dashboard_from_json,
+    name="CreateNewCloudwatchDashboardFromJson",
+    args_schema=CreateNewCloudwatchDashboardFromJsonArgs
+)
+
+TOOLS_NORMAL = [explain_metrics_for_opensearch_domain_tool, create_new_cloudwatch_dashboard_from_json_tool]
 TOOLS_DIRECT_RESPONSE = [list_raw_metrics_for_opensearch_domain_tool]
 TOOLS_ALL = TOOLS_NORMAL + TOOLS_DIRECT_RESPONSE
