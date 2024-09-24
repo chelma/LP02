@@ -1,9 +1,10 @@
-from typing import Literal
+from typing import Dict, List, Literal
 
 from langchain_aws import ChatBedrockConverse
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph, MessagesState
+from langgraph.graph.state import CompiledGraph
 from langgraph.prebuilt import ToolNode
 
 from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL
@@ -90,3 +91,23 @@ checkpointer = MemorySaver()
 # meaning you can use it as you would any other runnable.
 # Note that we're (optionally) passing the memory when compiling the graph
 AGENT = workflow.compile(checkpointer=checkpointer)
+
+def _create_runner(workflow: CompiledGraph):
+    def run_workflow(messages: List[BaseMessage], thread: int) -> Dict[str, any]:
+        events = workflow.stream(
+            {"messages": messages},
+            config={"configurable": {"thread_id": thread}},
+            stream_mode="values"
+        )
+
+        final_event = None
+        for event in events:
+            if "messages" in event:
+                event["messages"][-1].pretty_print()
+            final_event = event
+
+        return final_event
+
+    return run_workflow
+
+AGENT_RUNNER = _create_runner(AGENT)

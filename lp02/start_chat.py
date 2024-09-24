@@ -2,7 +2,7 @@
 from langchain_core.messages import HumanMessage
 import streamlit as st
 
-from cw_expert import CW_AGENT, CW_SYSTEM_MESSAGE
+from cw_expert import CW_AGENT, CW_AGENT_RUNNER, CW_SYSTEM_MESSAGE
 from utilities.ux import stringify_simplified_history
 
 
@@ -45,10 +45,15 @@ with left_col:
 if submit_button and user_input:
     # Invoke the LLM with the user input
     st.session_state.llm_messages.append(HumanMessage(content=user_input))
-    final_state = CW_AGENT.invoke(
-        {"messages": st.session_state.llm_messages},
-        config={"configurable": {"thread_id": 42}}
+    final_state = CW_AGENT_RUNNER(
+        st.session_state.llm_messages,
+        42
     )
+
+    # final_state = CW_AGENT.invoke(
+    #     {"messages": st.session_state.llm_messages},
+    #     config={"configurable": {"thread_id": 42}}
+    # )
     ai_response = final_state["messages"][-1]
 
     print("=======================================================================================================")
