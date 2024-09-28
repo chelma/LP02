@@ -12,4 +12,4 @@ You will ALWAYS follow the below guidelines when you are answering a question:
 </guidelines>
 """
 
-SYSTEM_MESSAGE = SystemMessage(content=message_string)
+CW_SYSTEM_MESSAGE = SystemMessage(content=message_string)
