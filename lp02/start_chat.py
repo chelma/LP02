@@ -49,13 +49,13 @@ if submit_button and user_input:
         st.session_state.llm_messages,
         42
     )
-    ai_response = final_state["messages"][-1]
+    ai_response = final_state["turns"][-1]
 
     print("=======================================================================================================")
-    print(stringify_simplified_history(final_state["messages"]))
+    print(stringify_simplified_history(final_state["turns"]))
 
     # Update the message history
-    st.session_state.llm_messages = final_state["messages"]
+    st.session_state.llm_messages = final_state["turns"]
 
     # Add the User Input and LLM response to the chat history, but ensure they are at the top for easy reading
     st.session_state.conversation.insert(0, "---")
