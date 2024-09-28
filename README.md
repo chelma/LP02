@@ -20,21 +20,6 @@ pipenv run streamlit run start_chat.py
 
 This will launch a Streamlit app, which should redirect you to your default browser and allow you to chat w/ an AI Agent.
 
-#### In AWS
-The package uses Terraform to manage its cloud deployments.  You'll need valid AWS Credentials in your keyring (check using `aws sts get-caller-identity`).
-
-```
-cd lp02
-
-./package.sh
-
-terraform init
-terraform plan
-terraform apply
-```
-
-You can then run the Lambda manually in the AWS console using test events.
-
 ### Dependencies
 `pipenv` is used to managed dependencies within the project.  The `Pipefile` and `Pipefile.lock` handle the local environment.  You can add dependencies like so:
 

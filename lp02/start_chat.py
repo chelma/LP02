@@ -15,7 +15,7 @@ if 'conversation' not in st.session_state:
 if 'llm_messages' not in st.session_state:
     st.session_state.llm_messages = [CW_SYSTEM_MESSAGE]
 
-st.title("GenAI Chatbot")
+st.title("Validation Librarian")
 
 # Apply custom CSS for column widths (optional, if further adjustments are needed)
 st.markdown(
