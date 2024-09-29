@@ -1,5 +1,6 @@
+from functools import wraps
 import logging
-from typing import Annotated, Dict, List, Literal
+from typing import Annotated, Any, Callable, Dict, List, Literal
 from typing_extensions import TypedDict
 
 from langchain_aws import ChatBedrockConverse
@@ -8,11 +9,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledGraph
-from langgraph.prebuilt import ToolNode
 
 from approval_expert import APPROVAL_GRAPH, get_approval_expert_system_message
 from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL, TOOLS_NEED_APPROVAL
-from utilities.logging import trace_node
 from utilities.graph import add_messages_with_reset, ResetMessages
 
 logger = logging.getLogger(__name__)
@@ -31,13 +30,38 @@ llm_with_tools = llm.bind_tools(TOOLS_ALL)
 class CwState(TypedDict):
     # Local to the parent graph
     cw_turns: Annotated[List[BaseMessage], add_messages_with_reset]
-    ops_to_approve: Dict[str, any]
+    ops_to_approve: List[Dict[str, any]]
 
     # Used to resume a conversation w/ the approval sub-graph
     approval_in_progress: bool
     is_approval_handoff: bool
     approval_turns: Annotated[List[BaseMessage], add_messages_with_reset]
     approval_outcome: str
+
+def cw_state_to_json(state: CwState) -> Dict[str, Any]:
+    return {
+        "cw_turns": [turn.to_json() for turn in state.get("cw_turns", [])],
+        "ops_to_approve": state.get("ops_to_approve", []),
+        "approval_in_progress": state.get("approval_in_progress", None),
+        "is_approval_handoff": state.get("is_approval_handoff", None),
+        "approval_turns": [turn.to_json() for turn in state.get("approval_turns", [])],
+        "approval_outcome": state.get("approval_outcome", None)
+    }
+    
+def trace_cw_node(func: Callable[[CwState], Dict[str, Any]]) -> Callable[[CwState], Dict[str, Any]]:
+    @wraps(func)
+    def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
+        logging.info(f"Entering node: {func.__name__}")
+        state_json = cw_state_to_json(state)
+        logging.debug(f"Starting state: {str(state_json)}")
+        
+        result = func(state)
+        
+        logging.debug(f"Output of {func.__name__}: {result}")
+        
+        return result
+    
+    return wrapper
 
 # Set up our tools
 tools_normal_by_name = {tool.name: tool for tool in TOOLS_NORMAL}
@@ -51,7 +75,7 @@ checkpointer = MemorySaver()
 cw_graph = StateGraph(CwState)
 
 # Set up our graph nodes
-@trace_node
+@trace_cw_node
 def tool_node(state: CwState) -> Dict[str, any]:
     """
     Node to handle normal tool cals
@@ -64,7 +88,7 @@ def tool_node(state: CwState) -> Dict[str, any]:
 
     return {"cw_turns": result}
 
-@trace_node
+@trace_cw_node
 def tool_node_direct(state: CwState):
     """
     Node to handle tool calls where we need to return the raw response from the tool directly
@@ -82,7 +106,7 @@ def tool_node_direct(state: CwState):
 
     return {"cw_turns": result}
 
-@trace_node
+@trace_cw_node
 def tool_node_approval(state: CwState):
     """
     Node to handle calling a tool after it has been manually reviewed and approved by the human
@@ -99,7 +123,7 @@ def tool_node_approval(state: CwState):
 
     return {"cw_turns": [result]}
 
-@trace_node
+@trace_cw_node
 def prep_approval(state: CwState):
     """
     Node to prepare the state for the approval sub-graph.  It sets up the the final message to the user from
@@ -118,7 +142,7 @@ def prep_approval(state: CwState):
 
     return {"cw_turns": [approval_prompt], "ops_to_approve": ops_to_approve, "approval_in_progress": True, "is_approval_handoff": True, "approval_outcome": None, "approval_turns": reset_turns}
 
-@trace_node
+@trace_cw_node
 def invoke_llm_cw(state: CwState):
     cw_turns = state['cw_turns']
     response = llm_with_tools.invoke(cw_turns)

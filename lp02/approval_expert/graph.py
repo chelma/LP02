@@ -1,5 +1,6 @@
+from functools import wraps
 import logging
-from typing import Annotated, Dict, List, Literal
+from typing import Annotated, Any, Callable, Dict, List, Literal
 from typing_extensions import TypedDict
 
 from langchain_aws import ChatBedrockConverse
@@ -10,7 +11,6 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledGraph
 
 from approval_expert.tools import TOOLS_ALL, TOOLS_TERMINAL
-from utilities.logging import trace_node
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +26,34 @@ llm_with_tools = llm.bind_tools(TOOLS_ALL)
 
 # Define the state our graph will be operating on
 class ApprovalState(TypedDict):
-    # Will be inherited from the parent graph
-    cw_turns: Annotated[List[BaseMessage], add_messages]
-
     # Local to this sub-graph
     approval_in_progress: bool
     is_approval_handoff: bool
     approval_turns: Annotated[List[BaseMessage], add_messages]
     approval_outcome: str
+
+def approval_state_to_json(state: ApprovalState) -> Dict[str, Any]:
+    return {
+        "approval_in_progress": state.get("approval_in_progress", None),
+        "is_approval_handoff": state.get("is_approval_handoff", None),
+        "approval_turns": [turn.to_json() for turn in state.get("approval_turns", [])],
+        "approval_outcome": state.get("approval_outcome", None)
+    }
+    
+def trace_approval_node(func: Callable[[ApprovalState], Dict[str, Any]]) -> Callable[[ApprovalState], Dict[str, Any]]:
+    @wraps(func)
+    def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
+        logging.info(f"Entering node: {func.__name__}")
+        state_json = approval_state_to_json(state)
+        logging.debug(f"Starting state: {str(state_json)}")
+        
+        result = func(state)
+        
+        logging.debug(f"Output of {func.__name__}: {result}")
+        
+        return result
+    
+    return wrapper
 
 # Set up our tools
 tools_terminal_by_name = {tool.name: tool for tool in TOOLS_TERMINAL}
@@ -42,7 +62,7 @@ tools_terminal_by_name = {tool.name: tool for tool in TOOLS_TERMINAL}
 approval_graph = StateGraph(ApprovalState)
 
 # Set up our graph nodes
-@trace_node
+@trace_approval_node
 def invoke_llm_approval(state: ApprovalState):
     """
     Node to call the LLM with the current context
@@ -53,7 +73,7 @@ def invoke_llm_approval(state: ApprovalState):
     response = llm_with_tools.invoke(approval_turns)
     return {"approval_turns": [response], "is_approval_handoff": False}
 
-@trace_node
+@trace_approval_node
 def terminal_decision(state: ApprovalState):
     """
     Node to invoke the terminal tool and store the decision made by the LLM in the state

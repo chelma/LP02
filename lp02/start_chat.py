@@ -4,10 +4,13 @@ from langchain_core.messages import HumanMessage
 import streamlit as st
 
 from cw_expert import CW_GRAPH_RUNNER, CW_SYSTEM_MESSAGE, CwState
+from cw_expert.graph import cw_state_to_json
 from utilities.logging import configure_logging
 from utilities.ux import stringify_simplified_history
 
-configure_logging("./debug.log", log_level=logging.DEBUG)
+configure_logging("./debug.log", "./info.log")
+
+logger = logging.getLogger(__name__)
 
 
 # Set page configuration to 'wide' to use the full width of the screen
@@ -86,11 +89,8 @@ if submit_button and user_input:
 
     ai_response = turns[-1]
 
-    print("=======================================================================================================")
-    # print(stringify_simplified_history(turns))
-    print(final_state)
-
     # Update the graph state
+    logger.debug(f"End of session graph state: {cw_state_to_json(final_state)}")
     st.session_state.graph_state = final_state
 
     # Add the User Input and LLM response to the chat history, but ensure they are at the top for easy reading
