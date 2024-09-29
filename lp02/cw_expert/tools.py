@@ -133,6 +133,7 @@ create_new_cloudwatch_dashboard_from_json_tool = StructuredTool.from_function(
     args_schema=CreateNewCloudwatchDashboardFromJsonArgs
 )
 
-TOOLS_NORMAL = [explain_metrics_for_opensearch_domain_tool, create_new_cloudwatch_dashboard_from_json_tool]
+TOOLS_NORMAL = [explain_metrics_for_opensearch_domain_tool]
 TOOLS_DIRECT_RESPONSE = [list_raw_metrics_for_opensearch_domain_tool]
-TOOLS_ALL = TOOLS_NORMAL + TOOLS_DIRECT_RESPONSE
+TOOLS_NEED_APPROVAL = [create_new_cloudwatch_dashboard_from_json_tool]
+TOOLS_ALL = TOOLS_NORMAL + TOOLS_DIRECT_RESPONSE + TOOLS_NEED_APPROVAL

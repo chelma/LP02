@@ -9,6 +9,7 @@ streamlit = "*"
 langchain-aws = "*"
 langgraph = "*"
 langchain = "*"
+ipython = "*"
 
 [dev-packages]
 

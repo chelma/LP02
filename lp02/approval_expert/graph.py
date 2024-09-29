@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, Dict, List, Literal
 from typing_extensions import TypedDict
 
@@ -9,6 +10,9 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledGraph
 
 from approval_expert.tools import TOOLS_ALL, TOOLS_TERMINAL
+from utilities.logging import trace_node
+
+logger = logging.getLogger(__name__)
 
 
 # Define our LLM
@@ -22,8 +26,13 @@ llm_with_tools = llm.bind_tools(TOOLS_ALL)
 
 # Define the state our graph will be operating on
 class ApprovalState(TypedDict):
-    turns: Annotated[List[BaseMessage], add_messages]
-    final_outcome: str
+    # Will be inherited from the parent graph
+    cw_turns: Annotated[List[BaseMessage], add_messages]
+
+    # Local to this sub-graph
+    approval_in_progress: bool
+    approval_turns: Annotated[List[BaseMessage], add_messages]
+    approval_outcome: str
 
 # Set up our tools
 tools_terminal_by_name = {tool.name: tool for tool in TOOLS_TERMINAL}
@@ -32,28 +41,31 @@ tools_terminal_by_name = {tool.name: tool for tool in TOOLS_TERMINAL}
 approval_graph = StateGraph(ApprovalState)
 
 # Set up our graph nodes
-def invoke_llm(state: ApprovalState):
+@trace_node
+def invoke_llm_approval(state: ApprovalState):
     """
     Node to call the LLM with the current context
     """
-    turns = state['turns']
-    response = llm_with_tools.invoke(turns)
-    # We return a list, because this will get added to the existing list
-    return {"turns": [response]}
+    logger.info(state["approval_turns"])
 
+    approval_turns = state['approval_turns']
+    response = llm_with_tools.invoke(approval_turns)
+    return {"approval_turns": [response]}
+
+@trace_node
 def terminal_decision(state: ApprovalState):
     """
     Node to invoke the terminal tool and store the decision made by the LLM in the state
     """
     result = []
-    tool_call = state["turns"][-1].tool_calls[-1]
+    tool_call = state["approval_turns"][-1].tool_calls[-1]
     tool = tools_terminal_by_name[tool_call["name"]]
     decision = tool.invoke(tool_call["args"])
     result.append(ToolMessage(content=decision, tool_call_id=tool_call["id"], name=tool.name))
     result.append(AIMessage(content=decision))
-    return {"turns": result, "final_outcome": decision}
+    return {"approval_in_progress": False, "approval_turns": result, "approval_outcome": tool_call["name"]}
 
-approval_graph.add_node("invoke_llm", invoke_llm)
+approval_graph.add_node("invoke_llm_approval", invoke_llm_approval)
 approval_graph.add_node("terminal", terminal_decision)
 
 # Define our graph edges
@@ -61,44 +73,45 @@ def next_node(state: ApprovalState) -> Literal["terminal", END]:
     """
     Function to route to the correct next node based on the outcome of the previous one
     """
-    turns = state['turns']
-    last_turn = turns[-1]
+    approval_turns = state['approval_turns']
+    last_turn = approval_turns[-1]
     # If the LLM reached a final determination on approval, we route to the "terminal" node
     if last_turn.tool_calls and last_turn.tool_calls[-1]["name"] in tools_terminal_by_name.keys():
         return "terminal"
     # Otherwise, we stop (reply to the user)
     return END
 
-approval_graph.add_edge(START, "invoke_llm")
+approval_graph.add_edge(START, "invoke_llm_approval")
 
 approval_graph.add_conditional_edges(
-    "invoke_llm",
+    "invoke_llm_approval",
     next_node
 )
 approval_graph.add_edge("terminal", END)
+
+APPROVAL_GRAPH = approval_graph
 
 # Initialize memory to persist state between graph runs
 checkpointer = MemorySaver()
 
 # Finally, compile the graph into a LangChain Runnable
-APPROVAL_GRAPH = approval_graph.compile(checkpointer=checkpointer)
-
 def _create_runner(workflow: CompiledGraph):
-    def run_workflow(turns: List[BaseMessage], thread: int) -> Dict[str, any]:
-        events = workflow.stream(
-            {"turns": turns},
+    def run_workflow(approval_turns: List[BaseMessage], thread: int) -> Dict[str, any]:
+        states = workflow.stream(
+            {"approval_turns": approval_turns},
             config={"configurable": {"thread_id": thread}},
             stream_mode="values"
         )
 
-        final_event = None
-        for event in events:
-            if "turns" in event:
-                event["turns"][-1].pretty_print()
-            final_event = event
+        final_state = None
+        for state in states:
+            if "approval_turns" in state:
+                state["approval_turns"][-1].pretty_print()
+                logger.info(state["approval_turns"][-1].to_json())
+            final_state = state
 
-        return final_event
+        return final_state
 
     return run_workflow
 
-APPROVAL_GRAPH_RUNNER = _create_runner(APPROVAL_GRAPH)
+APPROVAL_GRAPH_RUNNER = _create_runner(APPROVAL_GRAPH.compile(checkpointer=checkpointer))

@@ -1,9 +1,13 @@
+import logging
 
 from langchain_core.messages import HumanMessage
 import streamlit as st
 
-from cw_expert import CW_GRAPH_RUNNER, CW_SYSTEM_MESSAGE
+from cw_expert import CW_GRAPH_RUNNER, CW_SYSTEM_MESSAGE, CwState
+from utilities.logging import configure_logging
 from utilities.ux import stringify_simplified_history
+
+configure_logging("./debug.log", log_level=logging.DEBUG)
 
 
 # Set page configuration to 'wide' to use the full width of the screen
@@ -12,8 +16,12 @@ st.set_page_config(layout="wide")
 # Initialize session state to keep track of conversation history and LLM messages
 if 'conversation' not in st.session_state:
     st.session_state.conversation = []
-if 'llm_messages' not in st.session_state:
-    st.session_state.llm_messages = [CW_SYSTEM_MESSAGE]
+if 'graph_state' not in st.session_state:
+    st.session_state.graph_state = CwState(
+        cw_turns = [CW_SYSTEM_MESSAGE],
+        approval_turns = [],
+        approval_in_progress=False
+    )
 
 st.title("Validation Librarian")
 
@@ -44,18 +52,43 @@ with left_col:
 # When the user submits a message
 if submit_button and user_input:
     # Invoke the LLM with the user input
-    st.session_state.llm_messages.append(HumanMessage(content=user_input))
+    next_human_message = HumanMessage(content=user_input)
+
+    approval_in_progress = st.session_state.graph_state["approval_in_progress"]
+    logging.info(f"Approval in progress: {approval_in_progress}")
+
+    if approval_in_progress:
+        logging.info("Adding human message to approval turns")
+        st.session_state.graph_state["approval_turns"].append(next_human_message)
+    else:
+        logging.info("Adding human message to cw turns")
+        st.session_state.graph_state["cw_turns"].append(next_human_message)
+
     final_state = CW_GRAPH_RUNNER(
-        st.session_state.llm_messages,
+        st.session_state.graph_state,
         42
     )
-    ai_response = final_state["turns"][-1]
+
+    approval_in_progress = final_state["approval_in_progress"]
+    logging.info(f"Approval in progress: {approval_in_progress}")
+    is_handoff = len(final_state["approval_turns"]) == 1
+    logging.info(f"Is handoff: {is_handoff}")
+
+    if approval_in_progress and not is_handoff:
+        logging.info("Pulling AI response from approval turns")
+        turns = final_state["approval_turns"]
+    else:
+        logging.info("Pulling AI response from cw turns")
+        turns = final_state["cw_turns"]
+
+    ai_response = turns[-1]
 
     print("=======================================================================================================")
-    print(stringify_simplified_history(final_state["turns"]))
+    # print(stringify_simplified_history(turns))
+    print(final_state)
 
-    # Update the message history
-    st.session_state.llm_messages = final_state["turns"]
+    # Update the graph state
+    st.session_state.graph_state = final_state
 
     # Add the User Input and LLM response to the chat history, but ensure they are at the top for easy reading
     st.session_state.conversation.insert(0, "---")
@@ -70,4 +103,3 @@ with right_col:
     for entry in st.session_state.conversation:
         st.markdown(entry)
 
-# print(st.session_state.llm_messages)

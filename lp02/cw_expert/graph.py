@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, Dict, List, Literal
 from typing_extensions import TypedDict
 
@@ -9,7 +10,11 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledGraph
 from langgraph.prebuilt import ToolNode
 
-from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL
+from approval_expert import APPROVAL_GRAPH, get_approval_expert_system_message
+from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL, TOOLS_NEED_APPROVAL
+from utilities.logging import trace_node
+
+logger = logging.getLogger(__name__)
 
 
 # Define our LLM
@@ -23,17 +28,41 @@ llm_with_tools = llm.bind_tools(TOOLS_ALL)
 
 # Define the state our graph will be operating on
 class CwState(TypedDict):
-    turns: Annotated[List[BaseMessage], add_messages]
+    # Local to the parent graph
+    cw_turns: Annotated[List[BaseMessage], add_messages]
+    approval_context: Dict[str, any]
+
+    # Used to resume a conversation w/ the approval sub-graph
+    approval_in_progress: bool = False
+    approval_turns: Annotated[List[BaseMessage], add_messages]
+    approval_outcome: str
 
 # Set up our tools
+tools_normal_by_name = {tool.name: tool for tool in TOOLS_NORMAL}
 tools_direct_by_name = {tool.name: tool for tool in TOOLS_DIRECT_RESPONSE}
+tools_approval_by_name = {tool.name: tool for tool in TOOLS_NEED_APPROVAL}
+
+# Initialize memory to persist state between graph runs
+checkpointer = MemorySaver()
 
 # Define our graph
 cw_graph = StateGraph(CwState)
 
 # Set up our graph nodes
-tool_node = ToolNode(TOOLS_NORMAL)
+@trace_node
+def tool_node(state: CwState) -> Dict[str, any]:
+    """
+    Node to handle normal tool cals
+    """
+    result = []
+    tool_call = state["cw_turns"][-1].tool_calls[-1]
+    tool = tools_normal_by_name[tool_call["name"]]
+    observation = tool.invoke(tool_call["args"])
+    result.append(ToolMessage(name=tool_call["name"], content=observation, tool_call_id=tool_call["id"]))
 
+    return {"cw_turns": result}
+
+@trace_node
 def tool_node_direct(state: CwState):
     """
     Node to handle tool calls where we need to return the raw response from the tool directly
@@ -43,66 +72,143 @@ def tool_node_direct(state: CwState):
     and any HumanMessage.  We spoof that by adding an AIMessage at the end of our calls here.
     """
     result = []
-    tool_call = state["turns"][-1].tool_calls[-1]
+    tool_call = state["cw_turns"][-1].tool_calls[-1]
     tool = tools_direct_by_name[tool_call["name"]]
     observation = tool.invoke(tool_call["args"])
-    result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
+    result.append(ToolMessage(name="DummyToolNodeDirect", content=observation, tool_call_id=tool_call["id"]))
     result.append(AIMessage(content=observation))
 
-    return {"turns": result}
+    return {"cw_turns": result}
 
-def invoke_llm(state: CwState):
-    turns = state['turns']
-    response = llm_with_tools.invoke(turns)
-    return {"turns": [response]}
+@trace_node
+def tool_node_approval(state: CwState):
+    """
+    Node to handle calling a tool after it has been manually reviewed and approved by the human
+    operator.
 
-cw_graph.add_node("invoke_llm", invoke_llm)
+    This requires special handling because we need to pull the tool details from the graph state
+    rather than the message state.
+    """
+    tool_call = state["approval_context"][-1]
+    tool = tools_approval_by_name[tool_call["name"]]
+    observation = tool.invoke(tool_call["args"])
+    
+    result = ToolMessage(name="DummyToolNodeApproval", content=observation, tool_call_id=tool_call["id"])
+
+    return {"cw_turns": [result]}
+
+@trace_node
+def prep_approval(state: CwState):
+    """
+    Node to prepare the state for the approval sub-graph.  It sets up the the final message to the user from
+    the main graph and prepares the sub-graph state to receive the next message from the user.
+    """
+    # Save the original tool call that triggered the need for approval
+    approval_context = state["cw_turns"][-1].tool_calls
+
+    # Set up all the state for the approval sub graph
+    approval_system_message = get_approval_expert_system_message(str(approval_context))
+    approval_turns = [approval_system_message]
+
+    # Set the message that will be displayed to the user for them to respond with an approval decision
+    approval_prompt = AIMessage(content=f"Before I can perform that action, I need your approval.  Please approve or deny the following operation:\n\n{approval_context}")
+
+    return {"cw_turns": [approval_prompt], "approval_context": approval_context, "approval_in_progress": True, "approval_turns": approval_turns}
+
+@trace_node
+def invoke_llm_cw(state: CwState):
+    cw_turns = state['cw_turns']
+    response = llm_with_tools.invoke(cw_turns)
+    return {"cw_turns": [response]}
+
+cw_graph.add_node("invoke_llm_cw", invoke_llm_cw)
 cw_graph.add_node("tool", tool_node)
 cw_graph.add_node("tool_direct", tool_node_direct)
+cw_graph.add_node("prep_approval", prep_approval)
+cw_graph.add_node("approval", APPROVAL_GRAPH.compile(checkpointer=checkpointer))
+cw_graph.add_node("tool_approval", tool_node_approval)
 
 # Define our graph edges
-def next_node(state: CwState) -> Literal["tool_direct", "tool", END]:
-    turns = state['turns']
-    last_message = turns[-1]
-    # If the LLM makes a tool call, then we route to the "tools" node unless we need a direct response
+def starting_node(state: CwState) -> Literal["approval", "invoke_llm_cw"]:
+    # If we're in the middle of an approval conversation, we need to route to the approval sub-graph
+    if state.get("approval_in_progress", False):
+        return "approval"
+    
+    # Otherwise, we start with the LLM
+    return "invoke_llm_cw"
+
+def next_node(state: CwState) -> Literal["prep_approval", "tool_direct", "tool_approval", "tool", END]:
+    cw_turns = state['cw_turns']
+    last_message = cw_turns[-1]
+    # Route to the tools needing a direct response
     if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tools_direct_by_name.keys():
         return "tool_direct"
+    # The tool request needs approval; route accordingly
+    if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tools_approval_by_name.keys():
+        return "prep_approval"
     elif last_message.tool_calls:
         return "tool"
     return END
 
-cw_graph.add_edge(START, "invoke_llm")
+def next_node_after_approval(state: CwState) -> Literal["tool_approval", "invoke_llm_cw", END]:
+    # We have an approval outcome
+    if not state.get("approval_in_progress"):
+        approval_outcome = state["approval_outcome"]
 
-cw_graph.add_conditional_edges(
-    "invoke_llm",
-    next_node,
-)
+        # If the human operator approved the operation, we route to the "tool_approval" node
+        if approval_outcome == "ApprovalGranted":
+            return "tool_approval"
+        
+        if approval_outcome == "ApprovalDenied":
+            state["cw_turns"].append(
+                ToolMessage(
+                    name="DummyToolApprovalDenied",
+                    content="The human operator denied permission to perform the operation."
+                )
+            )
+            return "invoke_llm_cw"
+        
+        if approval_outcome == "ApprovalOther":
+            last_approval_turn = state["approval_turns"][-1]
+            state["cw_turns"].append(
+                ToolMessage(
+                    name="DummyToolApprovalOther",
+                    content=last_approval_turn.content
+                )
+            )
+            return "invoke_llm_cw"
+    
+    # We're still talking to the human operator about approval
+    return END
 
-cw_graph.add_edge("tool", 'invoke_llm')
+cw_graph.add_conditional_edges(START, starting_node)
+cw_graph.add_conditional_edges("invoke_llm_cw", next_node)
+cw_graph.add_conditional_edges("approval", next_node_after_approval)
 
+cw_graph.add_edge("tool", 'invoke_llm_cw')
+cw_graph.add_edge("tool_approval", 'invoke_llm_cw')
 cw_graph.add_edge("tool_direct", END)
-
-# Initialize memory to persist state between graph runs
-checkpointer = MemorySaver()
+cw_graph.add_edge("prep_approval", END)
 
 # Finally, compile the graph into a LangChain Runnable
 CW_GRAPH = cw_graph.compile(checkpointer=checkpointer)
 
 def _create_runner(workflow: CompiledGraph):
-    def run_workflow(turns: List[BaseMessage], thread: int) -> Dict[str, any]:
-        events = workflow.stream(
-            {"turns": turns},
+    def run_workflow(cw_state: CwState, thread: int) -> CwState:
+        states = workflow.stream(
+            cw_state,
             config={"configurable": {"thread_id": thread}},
             stream_mode="values"
         )
 
-        final_event = None
-        for event in events:
-            if "turns" in event:
-                event["turns"][-1].pretty_print()
-            final_event = event
+        final_state = None
+        for state in states:
+            if "cw_turns" in state:
+                state["cw_turns"][-1].pretty_print()
+                logger.info(state["cw_turns"][-1].to_json())
+            final_state = state
 
-        return final_event
+        return final_state
 
     return run_workflow
 
