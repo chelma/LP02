@@ -123,7 +123,7 @@ def create_new_cloudwatch_dashboard_from_json(dashboard_json: str, aws_region_na
     return dashboard_arn
 
 class CreateNewCloudwatchDashboardFromJsonArgs(BaseModel):
-    """Creates a completely new CloudWatch dashboard from a JSON string, assigning it a random UUID for a name. Returns the ARN of the created dashboard."""
+    """Creates a completely new CloudWatch dashboard from a JSON string, assigning it a random UUID for a name. Returns the ARN of the created dashboard.  Do not invoke without first having shown the Dashboard JSON to the human operator."""
     dashboard_json: str = Field(description="The JSON string representing the new dashboard's full body definition.")
     aws_region_name: str = Field(description="The AWS Region to create the dashboard in (example: us-east-1, us-west-2, etc...).")
 
