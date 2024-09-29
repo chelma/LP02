@@ -13,6 +13,7 @@ from langgraph.prebuilt import ToolNode
 from approval_expert import APPROVAL_GRAPH, get_approval_expert_system_message
 from cw_expert.tools import TOOLS_ALL, TOOLS_DIRECT_RESPONSE, TOOLS_NORMAL, TOOLS_NEED_APPROVAL
 from utilities.logging import trace_node
+from utilities.graph import add_messages_with_reset, ResetMessages
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +30,13 @@ llm_with_tools = llm.bind_tools(TOOLS_ALL)
 # Define the state our graph will be operating on
 class CwState(TypedDict):
     # Local to the parent graph
-    cw_turns: Annotated[List[BaseMessage], add_messages]
-    approval_context: Dict[str, any]
+    cw_turns: Annotated[List[BaseMessage], add_messages_with_reset]
+    ops_to_approve: Dict[str, any]
 
     # Used to resume a conversation w/ the approval sub-graph
-    approval_in_progress: bool = False
-    approval_turns: Annotated[List[BaseMessage], add_messages]
+    approval_in_progress: bool
+    is_approval_handoff: bool
+    approval_turns: Annotated[List[BaseMessage], add_messages_with_reset]
     approval_outcome: str
 
 # Set up our tools
@@ -89,7 +91,7 @@ def tool_node_approval(state: CwState):
     This requires special handling because we need to pull the tool details from the graph state
     rather than the message state.
     """
-    tool_call = state["approval_context"][-1]
+    tool_call = state["ops_to_approve"][-1]
     tool = tools_approval_by_name[tool_call["name"]]
     observation = tool.invoke(tool_call["args"])
     
@@ -104,16 +106,17 @@ def prep_approval(state: CwState):
     the main graph and prepares the sub-graph state to receive the next message from the user.
     """
     # Save the original tool call that triggered the need for approval
-    approval_context = state["cw_turns"][-1].tool_calls
+    ops_to_approve = state["cw_turns"][-1].tool_calls
 
-    # Set up all the state for the approval sub graph
-    approval_system_message = get_approval_expert_system_message(str(approval_context))
-    approval_turns = [approval_system_message]
+    # Create the system message that will be used to prompt the Approval LLM.  We need to reset the LLM 
+    # context window here, as we're starting a new approval conversation.
+    approval_system_message = get_approval_expert_system_message(str(ops_to_approve))
+    reset_turns = ResetMessages(messages=[approval_system_message])
 
     # Set the message that will be displayed to the user for them to respond with an approval decision
-    approval_prompt = AIMessage(content=f"Before I can perform that action, I need your approval.  Please approve or deny the following operation:\n\n{approval_context}")
+    approval_prompt = AIMessage(content=f"Before I can perform that action, I need your approval.  Please approve or deny the following operation:\n\n{ops_to_approve}")
 
-    return {"cw_turns": [approval_prompt], "approval_context": approval_context, "approval_in_progress": True, "approval_turns": approval_turns}
+    return {"cw_turns": [approval_prompt], "ops_to_approve": ops_to_approve, "approval_in_progress": True, "is_approval_handoff": True, "approval_outcome": None, "approval_turns": reset_turns}
 
 @trace_node
 def invoke_llm_cw(state: CwState):
@@ -130,6 +133,11 @@ cw_graph.add_node("tool_approval", tool_node_approval)
 
 # Define our graph edges
 def starting_node(state: CwState) -> Literal["approval", "invoke_llm_cw"]:
+    # Handle the handoff process
+    if state.get("is_approval_handoff", False):
+        state["is_approval_handoff"] = False
+        return "approval"
+
     # If we're in the middle of an approval conversation, we need to route to the approval sub-graph
     if state.get("approval_in_progress", False):
         return "approval"

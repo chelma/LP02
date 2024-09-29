@@ -10,3 +10,6 @@ lp02/lp02/
 # Terraform stuff
 *.tfstate*
 *.terraform*
+
+# Logs
+*debug.log

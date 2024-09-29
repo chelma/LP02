@@ -71,10 +71,13 @@ if submit_button and user_input:
 
     approval_in_progress = final_state["approval_in_progress"]
     logging.info(f"Approval in progress: {approval_in_progress}")
-    is_handoff = len(final_state["approval_turns"]) == 1
+    is_handoff = final_state["is_approval_handoff"]
     logging.info(f"Is handoff: {is_handoff}")
 
-    if approval_in_progress and not is_handoff:
+    if is_handoff:
+        logging.info("Pulling AI response from cw turns")
+        turns = final_state["cw_turns"]
+    elif approval_in_progress:
         logging.info("Pulling AI response from approval turns")
         turns = final_state["approval_turns"]
     else:

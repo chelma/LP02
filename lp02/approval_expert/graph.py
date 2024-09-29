@@ -31,6 +31,7 @@ class ApprovalState(TypedDict):
 
     # Local to this sub-graph
     approval_in_progress: bool
+    is_approval_handoff: bool
     approval_turns: Annotated[List[BaseMessage], add_messages]
     approval_outcome: str
 
@@ -50,7 +51,7 @@ def invoke_llm_approval(state: ApprovalState):
 
     approval_turns = state['approval_turns']
     response = llm_with_tools.invoke(approval_turns)
-    return {"approval_turns": [response]}
+    return {"approval_turns": [response], "is_approval_handoff": False}
 
 @trace_node
 def terminal_decision(state: ApprovalState):
