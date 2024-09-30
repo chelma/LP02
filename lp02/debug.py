@@ -71,28 +71,26 @@ logger = logging.getLogger(__name__)
 # final_state = CW_GRAPH_RUNNER(final_state, 42)
 
 
-cw_state = CwState(
-    cw_turns = [
-        CW_SYSTEM_MESSAGE
-    ],
-    approval_in_progress=False
-)
-cw_state["cw_turns"].append(
-    HumanMessage(content="Can you please make me a CloudWatch Dashboard for the Domain domain arn:aws:es:us-west-2:729929230507:domain/arkimedomain872-vzfrvtegjekp that shows me a single graph with the Average IndexingRate, WriteIOPS, and IndexingLatency?")
-)
-final_state = CW_GRAPH_RUNNER(cw_state, 42)
+# cw_state = CwState(
+#     cw_turns = [
+#         CW_SYSTEM_MESSAGE
+#     ],
+#     approval_in_progress=False
+# )
+# cw_state["cw_turns"].append(
+#     HumanMessage(content="Can you please make me a CloudWatch Dashboard for the Domain domain arn:aws:es:us-west-2:729929230507:domain/arkimedomain872-vzfrvtegjekp that shows me a single graph with the Average IndexingRate, WriteIOPS, and IndexingLatency?")
+# )
+# final_state = CW_GRAPH_RUNNER(cw_state, 42)
 
-final_state["approval_turns"].append(
-    HumanMessage(content="Yeah?")
-)
-final_state = CW_GRAPH_RUNNER(final_state, 42)
+# final_state["approval_turns"].append(
+#     HumanMessage(content="Yeah?")
+# )
+# final_state = CW_GRAPH_RUNNER(final_state, 42)
 
 # final_state["approval_turns"].append(
 #     HumanMessage(content="OK, sure, create it")
 # )
 # final_state = CW_GRAPH_RUNNER(final_state, 42)
 
-# from IPython.display import Image, display
-
-# # Setting xray to 1 will show the internal structure of the nested graph
-# CW_GRAPH.get_graph(xray=1).draw_mermaid_png(output_file_path="cw_graph.png")
+# Setting xray to 1 will show the internal structure of the nested graph
+CW_GRAPH.get_graph(xray=1).draw_mermaid_png(output_file_path="cw_graph.png")

@@ -76,7 +76,7 @@ cw_graph = StateGraph(CwState)
 
 # Set up our graph nodes
 @trace_cw_node
-def tool_node(state: CwState) -> Dict[str, any]:
+def node_tools_normal(state: CwState) -> Dict[str, any]:
     """
     Node to handle normal tool cals
     """
@@ -89,7 +89,7 @@ def tool_node(state: CwState) -> Dict[str, any]:
     return {"cw_turns": result}
 
 @trace_cw_node
-def tool_node_direct(state: CwState):
+def node_tools_direct_resp(state: CwState):
     """
     Node to handle tool calls where we need to return the raw response from the tool directly
     to the user rather than passing it through the LLM first.
@@ -107,7 +107,7 @@ def tool_node_direct(state: CwState):
     return {"cw_turns": result}
 
 @trace_cw_node
-def tool_node_approval(state: CwState):
+def node_tools_approval_req(state: CwState):
     """
     Node to handle calling a tool after it has been manually reviewed and approved by the human
     operator.
@@ -124,7 +124,7 @@ def tool_node_approval(state: CwState):
     return {"cw_turns": [result]}
 
 @trace_cw_node
-def prep_approval(state: CwState):
+def node_prep_approval_seq(state: CwState):
     """
     Node to prepare the state for the approval sub-graph.  It sets up the the final message to the user from
     the main graph and prepares the sub-graph state to receive the next message from the user.
@@ -143,53 +143,53 @@ def prep_approval(state: CwState):
     return {"cw_turns": [approval_prompt], "ops_to_approve": ops_to_approve, "approval_in_progress": True, "is_approval_handoff": True, "approval_outcome": None, "approval_turns": reset_turns}
 
 @trace_cw_node
-def invoke_llm_cw(state: CwState):
+def node_invoke_llm_cw(state: CwState):
     cw_turns = state['cw_turns']
     response = llm_with_tools.invoke(cw_turns)
     return {"cw_turns": [response]}
 
-cw_graph.add_node("invoke_llm_cw", invoke_llm_cw)
-cw_graph.add_node("tool", tool_node)
-cw_graph.add_node("tool_direct", tool_node_direct)
-cw_graph.add_node("prep_approval", prep_approval)
-cw_graph.add_node("approval", APPROVAL_GRAPH.compile(checkpointer=checkpointer))
-cw_graph.add_node("tool_approval", tool_node_approval)
+cw_graph.add_node("node_invoke_llm_cw", node_invoke_llm_cw)
+cw_graph.add_node("node_tools_normal", node_tools_normal)
+cw_graph.add_node("node_tools_direct_resp", node_tools_direct_resp)
+cw_graph.add_node("node_prep_approval_seq", node_prep_approval_seq)
+cw_graph.add_node("node_approval_seq", APPROVAL_GRAPH.compile(checkpointer=checkpointer))
+cw_graph.add_node("node_tools_approval_req", node_tools_approval_req)
 
 # Define our graph edges
-def starting_node(state: CwState) -> Literal["approval", "invoke_llm_cw"]:
+def starting_node(state: CwState) -> Literal["node_approval_seq", "node_invoke_llm_cw"]:
     # Handle the handoff process
     if state.get("is_approval_handoff", False):
         state["is_approval_handoff"] = False
-        return "approval"
+        return "node_approval_seq"
 
     # If we're in the middle of an approval conversation, we need to route to the approval sub-graph
     if state.get("approval_in_progress", False):
-        return "approval"
+        return "node_approval_seq"
     
     # Otherwise, we start with the LLM
-    return "invoke_llm_cw"
+    return "node_invoke_llm_cw"
 
-def next_node(state: CwState) -> Literal["prep_approval", "tool_direct", "tool_approval", "tool", END]:
+def next_node(state: CwState) -> Literal["node_prep_approval_seq", "node_tools_direct_resp", "node_tools_normal", END]:
     cw_turns = state['cw_turns']
     last_message = cw_turns[-1]
     # Route to the tools needing a direct response
     if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tools_direct_by_name.keys():
-        return "tool_direct"
+        return "node_tools_direct_resp"
     # The tool request needs approval; route accordingly
     if last_message.tool_calls and last_message.tool_calls[-1]["name"] in tools_approval_by_name.keys():
-        return "prep_approval"
+        return "node_prep_approval_seq"
     elif last_message.tool_calls:
-        return "tool"
+        return "node_tools_normal"
     return END
 
-def next_node_after_approval(state: CwState) -> Literal["tool_approval", "invoke_llm_cw", END]:
+def next_node_after_approval(state: CwState) -> Literal["node_tools_approval_req", "node_invoke_llm_cw", END]:
     # We have an approval outcome
     if not state.get("approval_in_progress"):
         approval_outcome = state["approval_outcome"]
 
-        # If the human operator approved the operation, we route to the "tool_approval" node
+        # If the human operator approved the operation, we route to the "node_tools_approval_req" node
         if approval_outcome == "ApprovalGranted":
-            return "tool_approval"
+            return "node_tools_approval_req"
         
         if approval_outcome == "ApprovalDenied":
             state["cw_turns"].append(
@@ -198,7 +198,7 @@ def next_node_after_approval(state: CwState) -> Literal["tool_approval", "invoke
                     content="The human operator denied permission to perform the operation."
                 )
             )
-            return "invoke_llm_cw"
+            return "node_invoke_llm_cw"
         
         if approval_outcome == "ApprovalOther":
             last_approval_turn = state["approval_turns"][-1]
@@ -208,19 +208,19 @@ def next_node_after_approval(state: CwState) -> Literal["tool_approval", "invoke
                     content=last_approval_turn.content
                 )
             )
-            return "invoke_llm_cw"
+            return "node_invoke_llm_cw"
     
     # We're still talking to the human operator about approval
     return END
 
 cw_graph.add_conditional_edges(START, starting_node)
-cw_graph.add_conditional_edges("invoke_llm_cw", next_node)
-cw_graph.add_conditional_edges("approval", next_node_after_approval)
+cw_graph.add_conditional_edges("node_invoke_llm_cw", next_node)
+cw_graph.add_conditional_edges("node_approval_seq", next_node_after_approval)
 
-cw_graph.add_edge("tool", 'invoke_llm_cw')
-cw_graph.add_edge("tool_approval", 'invoke_llm_cw')
-cw_graph.add_edge("tool_direct", END)
-cw_graph.add_edge("prep_approval", END)
+cw_graph.add_edge("node_tools_normal", 'node_invoke_llm_cw')
+cw_graph.add_edge("node_tools_approval_req", 'node_invoke_llm_cw')
+cw_graph.add_edge("node_tools_direct_resp", END)
+cw_graph.add_edge("node_prep_approval_seq", END)
 
 # Finally, compile the graph into a LangChain Runnable
 CW_GRAPH = cw_graph.compile(checkpointer=checkpointer)

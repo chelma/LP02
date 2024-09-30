@@ -57,7 +57,7 @@ if submit_button and user_input:
     # Invoke the LLM with the user input
     next_human_message = HumanMessage(content=user_input)
 
-    approval_in_progress = st.session_state.graph_state["approval_in_progress"]
+    approval_in_progress = st.session_state.graph_state.get("approval_in_progress", False)
     logging.info(f"Approval in progress: {approval_in_progress}")
 
     if approval_in_progress:
@@ -72,20 +72,20 @@ if submit_button and user_input:
         42
     )
 
-    approval_in_progress = final_state["approval_in_progress"]
+    approval_in_progress = final_state.get("approval_in_progress", False)
     logging.info(f"Approval in progress: {approval_in_progress}")
-    is_handoff = final_state["is_approval_handoff"]
+    is_handoff = final_state.get("is_approval_handoff", False)
     logging.info(f"Is handoff: {is_handoff}")
 
     if is_handoff:
         logging.info("Pulling AI response from cw turns")
-        turns = final_state["cw_turns"]
+        turns = final_state.get("cw_turns", [])
     elif approval_in_progress:
         logging.info("Pulling AI response from approval turns")
-        turns = final_state["approval_turns"]
+        turns = final_state.get("approval_turns", [])
     else:
         logging.info("Pulling AI response from cw turns")
-        turns = final_state["cw_turns"]
+        turns = final_state.get("cw_turns")
 
     ai_response = turns[-1]
 

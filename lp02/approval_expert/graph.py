@@ -63,7 +63,7 @@ approval_graph = StateGraph(ApprovalState)
 
 # Set up our graph nodes
 @trace_approval_node
-def invoke_llm_approval(state: ApprovalState):
+def node_invoke_llm_approval(state: ApprovalState):
     """
     Node to call the LLM with the current context
     """
@@ -74,7 +74,7 @@ def invoke_llm_approval(state: ApprovalState):
     return {"approval_turns": [response], "is_approval_handoff": False}
 
 @trace_approval_node
-def terminal_decision(state: ApprovalState):
+def node_terminal_decision(state: ApprovalState):
     """
     Node to invoke the terminal tool and store the decision made by the LLM in the state
     """
@@ -86,11 +86,11 @@ def terminal_decision(state: ApprovalState):
     result.append(AIMessage(content=decision))
     return {"approval_in_progress": False, "approval_turns": result, "approval_outcome": tool_call["name"]}
 
-approval_graph.add_node("invoke_llm_approval", invoke_llm_approval)
-approval_graph.add_node("terminal", terminal_decision)
+approval_graph.add_node("node_invoke_llm_approval", node_invoke_llm_approval)
+approval_graph.add_node("node_terminal_decision", node_terminal_decision)
 
 # Define our graph edges
-def next_node(state: ApprovalState) -> Literal["terminal", END]:
+def next_node(state: ApprovalState) -> Literal["node_terminal_decision", END]:
     """
     Function to route to the correct next node based on the outcome of the previous one
     """
@@ -98,17 +98,17 @@ def next_node(state: ApprovalState) -> Literal["terminal", END]:
     last_turn = approval_turns[-1]
     # If the LLM reached a final determination on approval, we route to the "terminal" node
     if last_turn.tool_calls and last_turn.tool_calls[-1]["name"] in tools_terminal_by_name.keys():
-        return "terminal"
+        return "node_terminal_decision"
     # Otherwise, we stop (reply to the user)
     return END
 
-approval_graph.add_edge(START, "invoke_llm_approval")
+approval_graph.add_edge(START, "node_invoke_llm_approval")
 
 approval_graph.add_conditional_edges(
-    "invoke_llm_approval",
+    "node_invoke_llm_approval",
     next_node
 )
-approval_graph.add_edge("terminal", END)
+approval_graph.add_edge("node_terminal_decision", END)
 
 APPROVAL_GRAPH = approval_graph
 
